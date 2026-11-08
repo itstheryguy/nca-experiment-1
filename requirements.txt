@@ -1,0 +1,8 @@
+# Training (installed globally on the dev machine)
+torch
+numpy
+matplotlib
+jupyter
+# In the venv
+pillow
+streamlit
