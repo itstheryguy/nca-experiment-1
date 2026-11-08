@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 
+import chaos_numpy as cn
 import nca_numpy as ca
 
 HERE = Path(__file__).parent
@@ -41,10 +42,31 @@ def weights(path):
     return ca.load_weights(HERE / path)
 
 
+@st.cache_resource
+def presets():
+    return cn.load_presets(HERE / "chaos_presets.json")
+
+
+def clear_chaos():
+    st.session_state.chaos = np.zeros_like(st.session_state.x[0], dtype=np.int8)
+    st.session_state.sparked = False
+    st.session_state.burned_out = None
+
+
 def reset():
     st.session_state.x = ca.make_seed(weights(MODELS[st.session_state.model][0])["cfg"])
     st.session_state.steps = 0
     st.session_state.ms = None
+    clear_chaos()
+
+
+def chaos_off():
+    """Turning chaos off returns its cells to the NCA as empty cells."""
+    if not st.session_state.chaos_on:
+        x = st.session_state.x.copy()
+        x[:, st.session_state.chaos > 0] = 0
+        st.session_state.x = x
+        clear_chaos()
 
 
 available = [name for name, (path, _) in MODELS.items() if (HERE / path).exists()]
@@ -89,6 +111,25 @@ if view == "Hidden channel":
                         help="The hidden channels are the state the cells use to coordinate.")
 speed = st.slider("Steps per frame", 1, 8, 2)
 
+with st.container(border=True):
+    chaos_on = st.toggle("Chaos agent", key="chaos_on", on_change=chaos_off,
+                         help="A stochastic process that spreads through the grid and fights the NCA for it.")
+    if chaos_on:
+        names = list(presets())
+        k1, k2 = st.columns(2)
+        preset = k1.selectbox("Preset", names, format_func=lambda n: presets()[n]["label"])
+        start = k2.number_input("Chaos starts at step", 0, 5000, 150 if cfg["alive_mask"] else 100, step=10,
+                                help="0 starts it together with the NCA. The default lets the NCA form first.")
+        k3, k4 = st.columns(2)
+        every = k3.slider("NCA steps per chaos tick", 1, 5, 1)
+        thaw = k4.slider("Thaw rate", 0.0, 1.0, float(presets()[preset]["thaw"]), 0.05,
+                         help="Chance per tick that a frozen (blue) cell thaws back to an empty NCA cell. "
+                              "0 means frozen cells are permanent, so every run eventually ends.")
+        P = presets()[preset] | {"thaw": thaw}
+        if st.button("Spark", icon=":material/local_fire_department:", help="Add one agent at a random cell"):
+            st.session_state.chaos = cn.spark(st.session_state.chaos, rng.random)
+            st.session_state.sparked, st.session_state.burned_out = True, None
+
 
 def png_data_uri(img):
     """Encode an (H, W) or (H, W, 3) uint8 array as a PNG data URI, without Pillow.
@@ -109,7 +150,7 @@ def png_data_uri(img):
 
 def render(x):
     if view == "Color":
-        return ca.to_rgb(x, cfg)
+        return cn.overlay(ca.to_rgb(x, cfg), st.session_state.chaos)
     if view == "Hidden channel":
         return ca.to_heatmap(x, channel)
     c = x.shape[0]
@@ -120,19 +161,37 @@ def render(x):
 
 @st.fragment(run_every=FRAME_SECONDS if st.session_state.playing else None)
 def board():
-    if st.session_state.playing:
+    ss = st.session_state
+    if ss.playing:
         t = time.perf_counter()
-        x = st.session_state.x
+        x, c = ss.x, ss.chaos
         for _ in range(speed):
             x = ca.step(x, wts, rng)
-        st.session_state.x = x
-        st.session_state.steps += speed
-        st.session_state.ms = (time.perf_counter() - t) * 1000 / speed
+            ss.steps += 1
+            if chaos_on:
+                x = cn.clamp(x, c, cfg)
+                if ss.steps >= start:
+                    if not ss.sparked:
+                        c, ss.sparked = cn.spark(c, rng.random), True
+                    if (ss.steps - start) % every == 0:
+                        c, x = cn.tick(c, x, cfg, P, rng.random)
+                    if ss.burned_out is None and not (c == cn.RED).any():
+                        ss.burned_out = ss.steps
+        ss.x, ss.chaos = x, c
+        ss.ms = (time.perf_counter() - t) * 1000 / speed
     # Upscaled by the browser with pixelated sampling, so cells stay crisp and the payload stays ~10 KB.
     st.html(f'<img src="{png_data_uri(render(st.session_state.x))}" alt="NCA grid, {view.lower()}" '
             'style="display:block;margin:auto;width:100%;max-width:512px;image-rendering:pixelated">')
     ms = st.session_state.get("ms")
-    st.caption(f"Step {st.session_state.steps}" + (f" · {ms:.0f} ms per step" if ms else ""))
+    line = f"Step {st.session_state.steps}" + (f" · {ms:.0f} ms per step" if ms else "")
+    if chaos_on:
+        f = cn.counts(st.session_state.chaos)
+        line += f" · NCA {f['nca']:.0%} · red {f['red']:.0%} · black {f['black']:.0%} · blue {f['blue']:.0%}"
+        if st.session_state.burned_out is not None:
+            line += f" · chaos burned out at step {st.session_state.burned_out}"
+        elif not st.session_state.sparked:
+            line += f" · chaos starts at step {start}"
+    st.caption(line)
 
 
 board()
@@ -155,6 +214,21 @@ contour map: the feature statistics a pretrained image network (VGG16) sees, not
 pool of past states, some damaged, so the rule learns to stay stable and repair, not only grow once.
 
 Code: [{REPO.removeprefix("https://")}]({REPO}).
+""")
+
+with st.expander("The chaos agent"):
+    st.markdown("""
+Cells are either **NCA**, 🟥 **active agents**, ⬛ **dead agents**, or 🟦 **frozen**. Each chaos tick:
+
+1. Frozen cells thaw back to empty NCA cells at the thaw rate (0 by default: frozen is permanent).
+2. Dead agents freeze with probability 0.1.
+3. The NCA reclaims chaos cells that touch a living NCA cell: active agents with probability 0.2, dead ones 0.8.
+4. Every active agent rolls 0-99 on its preset's table: die, spread to the nearest 1-40 cells (always succeeding on
+   NCA cells, mountain or empty alike; dead cells resist 20% of the time), die after spreading, or spawn new
+   agents anywhere on the grid.
+
+The NCA sees chaos cells as fixed colors through its normal 3×3 view, but can't change them. With permanent freezing,
+every run eventually ends: chaos burns out, and what's left is NCA and frozen cells.
 """)
 
 st.caption("Emoji: Noto Emoji 🏔️ by Google, Apache License 2.0. Contour map: generated (tools/make_topo_texture.py).")
