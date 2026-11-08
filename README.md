@@ -1,39 +1,48 @@
-# Growing NCA: a mountain from one cell
+# Neural Cellular Automata: mountains, maps, and chaos
 
-A PyTorch Neural Cellular Automaton that grows the 🏔️ emoji from a single seed cell, keeps it stable, and regrows
-it after damage, after [Growing Neural Cellular Automata](https://distill.pub/2020/growing-ca/) (Mordvintsev et
-al., 2020). Deployed as a static Hugging Face Space that runs in the browser with stlite.
+PyTorch Neural Cellular Automata deployed as a static Hugging Face Space that runs in the browser with stlite.
 
-<img src="assets/grow.gif" width="256" alt="The mountain growing from one cell, cut in half at step 300, and regrowing">
+<img src="assets/mountain.gif" width="256" alt="The mountain growing from one cell, cut in half at step 300, and regrowing">
 
-Growing from one cell, then cut in half at step 300 and regrowing. 8,000 training iterations (50 minutes on an
-M1 Pro), final loss 0.0034; stable through at least 2,000 steps.
+| Model | Status | Based on |
+|---|---|---|
+| `mountain`: grows the 🏔️ emoji from one cell and regrows damage | trained (8,000 iterations, 50 min on an M1 Pro, loss 0.0034, stable through 2,000+ steps) | [Growing NCA](https://distill.pub/2020/growing-ca/) |
+| `texture`: grows a topographic contour-map texture on a wrapping grid | ready to train | [Self-Organising Textures](https://distill.pub/selforg/2021/textures/) |
+| `mountain_chaos`, `texture_chaos`: trained against a stochastic "chaos agent" | rules being designed | |
+
+## Layout
 
 | Path | What |
 |---|---|
-| `nca.py` | Model (`CAModel`), seed, target loading, damage, weight export |
-| `train.ipynb` | Training loop with sample pool, damage, and live flipbook |
-| `space/` | The Space: `app.py` (Streamlit), `nca_numpy.py` (numpy port of the model), `index.html` (stlite) |
-| `peek.py` | Progress and a preview image during a training run |
-| `tests/test_parity.py` | Checks the numpy port matches PyTorch |
-| `data/` | Noto Emoji mountain PNGs (Apache 2.0) |
+| `nca.py` | Model (`CAModel`, configured by `CAConfig`), seeds, targets, damage, weight export |
+| `train.py` | Experiment configs, pool training loop, pixel and VGG style losses |
+| `train.ipynb` | Training driver: runs locally (MPS) or on Colab (CUDA), with a live flipbook |
+| `space/` | The Space: `app.py` (Streamlit), `nca_numpy.py` (numpy port of the model), `index.html` (stlite), `models/*.npz` |
+| `tests/test_parity.py` | Checks the numpy port matches PyTorch for both model types |
+| `tools/make_topo_texture.py` | Generates the contour-map texture target |
+| `peek.py` | Progress and a preview image during a local training run |
+| `runs/` | Training loss logs |
 
 ## Setup
 
 ```sh
-pip install torch numpy matplotlib jupyter          # global
-python -m venv --system-site-packages .venv          # sees the global packages
+pip install torch torchvision numpy matplotlib jupyter   # global
+python -m venv --system-site-packages .venv             # sees the global packages
 .venv/bin/pip install pillow streamlit
 ```
 
 ## Train
 
-Open `train.ipynb` with the `.venv` interpreter and run all cells (about 50 minutes for 8,000 iterations on an M1
-Pro with MPS). Or headless: `.venv/bin/python -m jupyter nbconvert --execute --inplace train.ipynb`.
-Set `NCA_ITERS` to change the iteration count. It writes `models/nca_mountain.pth` and `space/nca_mountain.npz`.
+Set `EXPERIMENT` in `train.ipynb` and run all cells.
 
-During a headless run, `python peek.py` prints progress and saves `checkpoints/peek.png`, a preview grown from the
-latest checkpoint (including a cut-in-half regrowth test). `python peek.py --watch` keeps a live progress bar.
+- **Locally:** pick the `.venv` interpreter. About 50 minutes for `mountain` and 17 for `texture` on an M1 Pro.
+- **On Colab** (VS Code Colab extension, or colab.research.google.com): pick a GPU runtime. The notebook clones this
+  repo from GitHub `main`, so push first. It needs a GitHub fine-grained token with *Contents: read and write* on
+  this repo, from the Colab secret `GH_TOKEN` or pasted when asked. When training ends it pushes the weights, GIF,
+  and loss log to a `run/<experiment>-<time>` branch to merge.
+
+Each run writes `models/<name>.pth`, `space/models/<name>.npz`, `assets/<name>.gif`, and `runs/<name>_log.csv`.
+To show a new model in the Space, add it to `MODELS` in `space/app.py` and to the file list in `space/index.html`.
 
 ## Run the Space locally
 
@@ -45,10 +54,12 @@ python -m http.server -d space 8000                  # as the static stlite page
 ## Deploy
 
 ```sh
-hf upload <user>/growing-nca space . --repo-type space --exclude "__pycache__/*"
+hf upload itstheryguy/growing-nca space . --repo-type space --exclude "__pycache__/*"
 ```
 
-## Differences from the original paper
+## Notes
 
-- 44 px emoji on a 64 px grid (the paper: 40 px on 72 px).
-- Fused depthwise perception conv (one grouped `conv2d`), about 13% faster on MPS.
+- Mountain: 44 px emoji on a 64 px grid (the paper: 40 px on 72 px).
+- Texture: 12 channels and 96 hidden units (the paper's size), trained at 64×64 with the VGG loss on a 2× upsample.
+- Perception is one grouped `conv2d` (about 13% faster on MPS than three). The numpy runtime only evaluates cells
+  that fire and are near a live cell, which is exact and about 7× faster under WebAssembly.

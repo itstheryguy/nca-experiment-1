@@ -1,7 +1,7 @@
-"""Check on a training run: progress, recent loss, and a preview grown from the latest checkpoint.
+"""Check on a local training run: progress, recent loss, and a preview grown from the latest checkpoint.
 
-    python peek.py            # writes checkpoints/peek.png
-    python peek.py --watch    # refresh the progress line every 10 s (Ctrl-C to stop)
+    python peek.py texture            # writes checkpoints/texture/peek.png
+    python peek.py mountain --watch   # refresh the progress line every 10 s (Ctrl-C to stop)
 """
 import csv
 import sys
@@ -13,9 +13,11 @@ import numpy as np
 import torch
 
 import nca
+import train
 
-CKPT = Path("checkpoints")
-TOTAL = 8000
+EXP = train.EXPERIMENTS[sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "mountain"]
+CKPT = Path("checkpoints") / EXP.name
+TOTAL = EXP.iters
 
 
 def progress():
@@ -33,17 +35,17 @@ if "--watch" in sys.argv:
 
 line, rows = progress()
 print(line)
-ckpt = sorted(CKPT.glob("nca_*.pth"))[-1]
-model = nca.CAModel()
+ckpt = sorted(CKPT.glob(f"{EXP.name}_*.pth"))[-1]
+model = nca.CAModel(EXP.ca)
 model.load_state_dict(torch.load(ckpt, map_location="cpu"))
 with torch.no_grad():
-    x, frames = nca.make_seed(1), []
+    x, frames = nca.make_seed(EXP.ca, 1, EXP.grid), []
     for step in range(1, 401):
         if step == 201:
-            x[..., nca.GRID // 2:] = 0  # cut in half to check regrowth
+            x[..., EXP.grid // 2:] = 0  # cut in half to check regrowth
         x = model(x)
         if step in (25, 50, 100, 200, 225, 300, 400):
-            frames.append((step, nca.to_rgb(x)[0]))
+            frames.append((step, nca.to_rgb(x, EXP.ca)[0]))
 
 fig, ax = plt.subplots(1, len(frames) + 1, figsize=(2.2 * (len(frames) + 1), 2.4))
 for a, (s, f) in zip(ax, frames):

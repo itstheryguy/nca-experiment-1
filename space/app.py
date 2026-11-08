@@ -1,11 +1,13 @@
-"""Growing NCA: the Hugging Face Space.
+"""Neural Cellular Automata: the Hugging Face Space.
 
 Runs in the visitor's browser with stlite (Streamlit on WebAssembly), so the Space needs no server. Pyodide has
-no PyTorch, so the CA runs on a numpy port of the model (nca_numpy.py) with weights exported from training.
+no PyTorch, so the CA runs on a numpy port of the model (nca_numpy.py) with weights exported from training. Each
+model's .npz carries its own settings (channels, wrap, alive mask, render mode).
 The same file also runs as a normal Streamlit app: `streamlit run space/app.py`.
 """
 
 import base64
+import math
 import struct
 import time
 import zlib
@@ -17,56 +19,74 @@ import streamlit as st
 import nca_numpy as ca
 
 HERE = Path(__file__).parent
-CHANNELS, GRID = 16, 64
 FRAME_SECONDS = 0.1  # fragment timer while playing
 REPO = "https://github.com/itstheryguy/nca-experiment-1"
-PAPER = "https://distill.pub/2020/growing-ca/"
-VIEWS = ["Color", "Hidden channel", "All 16 channels"]
+GROWING = "https://distill.pub/2020/growing-ca/"
+TEXTURES = "https://distill.pub/selforg/2021/textures/"
+# Shown in this order when the file exists. index.html must list each file too, so stlite loads it.
+MODELS = {
+    "Mountain": ("models/mountain.npz",
+                 "Grows the 🏔️ emoji from a single live cell, holds it steady, and regrows damage."),
+    "Topographic texture": ("models/texture.npz",
+                            "Every cell is alive and the edges wrap around. Instead of one picture, the cells learn "
+                            "the *style* of a contour map, so no two runs draw the same terrain."),
+}
+VIEWS = ["Color", "Hidden channel", "All channels"]
 
-st.set_page_config(page_title="Growing NCA", page_icon="🏔️", layout="centered")
+st.set_page_config(page_title="Neural Cellular Automata", page_icon="🏔️", layout="centered")
 
 
 @st.cache_resource
-def weights():
-    return ca.load_weights(HERE / "nca_mountain.npz")
+def weights(path):
+    return ca.load_weights(HERE / path)
 
 
 def reset():
-    st.session_state.x = ca.make_seed(CHANNELS, GRID)
+    st.session_state.x = ca.make_seed(weights(MODELS[st.session_state.model][0])["cfg"])
     st.session_state.steps = 0
+    st.session_state.ms = None
 
 
-if "x" not in st.session_state:
+available = [name for name, (path, _) in MODELS.items() if (HERE / path).exists()]
+if "model" not in st.session_state:
+    st.session_state.model = available[0]
     st.session_state.rng = np.random.default_rng()
-    reset()
     st.session_state.playing = True
+    reset()
 
-wts = weights()
-rng = st.session_state.rng
-
-st.title("🏔️ Growing a mountain from one cell")
+st.title("🏔️ Neural Cellular Automata")
 st.markdown(
-    "Every pixel runs the same tiny neural network (about 8,000 weights), and sees only its 8 neighbors. "
-    "From a single live cell they grow the mountain, hold it steady, and regrow it when you damage it. "
-    f"A PyTorch reimplementation of [Growing Neural Cellular Automata]({PAPER}), running in your browser."
+    "Every pixel runs the same tiny neural network and sees only its 8 neighbors. Nothing stores the picture: it "
+    "exists only as the cells' agreement with each other, which is why it can repair itself. "
+    f"PyTorch reimplementations of [Growing Neural Cellular Automata]({GROWING}) and "
+    f"[Self-Organising Textures]({TEXTURES}), running in your browser."
 )
+
+model = st.selectbox("Model", available, key="model", on_change=reset)
+wts = weights(MODELS[model][0])
+cfg = wts["cfg"]
+rng = st.session_state.rng
+grid = cfg["grid"]
+n_visible = 4 if cfg["render"] == "rgba" else 3
+st.caption(MODELS[model][1])
 
 # Controls. Any widget change reruns the whole script, which also re-registers the fragment timer below.
 c1, c2, c3, c4 = st.columns(4)
 c1.button("Reset", on_click=reset, width="stretch", icon=":material/restart_alt:")
 st.session_state.playing = c2.toggle("Play", value=st.session_state.playing)
 if c3.button("Damage", width="stretch", icon=":material/bolt:", help="Erase a random circle"):
-    cy, cx = rng.integers(GRID // 4, 3 * GRID // 4, size=2)
+    cy, cx = rng.integers(grid // 4, 3 * grid // 4, size=2)
     st.session_state.x = ca.erase(st.session_state.x, cy, cx, radius=rng.integers(6, 14))
 if c4.button("Cut in half", width="stretch", icon=":material/content_cut:"):
     st.session_state.x = st.session_state.x.copy()
-    st.session_state.x[:, :, GRID // 2:] = 0
+    st.session_state.x[:, :, grid // 2:] = 0
 
 v1, v2 = st.columns([2, 1])
 view = v1.selectbox("View", VIEWS)
-channel = 4
+channel = n_visible
 if view == "Hidden channel":
-    channel = v2.slider("Channel", 4, 15, 4, help="Channels 4-15 are the hidden state the cells use to coordinate.")
+    channel = v2.slider("Channel", n_visible, cfg["channels"] - 1, n_visible,
+                        help="The hidden channels are the state the cells use to coordinate.")
 speed = st.slider("Steps per frame", 1, 8, 2)
 
 
@@ -89,11 +109,13 @@ def png_data_uri(img):
 
 def render(x):
     if view == "Color":
-        return ca.to_rgb(x)
+        return ca.to_rgb(x, cfg)
     if view == "Hidden channel":
         return ca.to_heatmap(x, channel)
-    tiles = [np.pad(ca.to_heatmap(x, c), 1, constant_values=255) for c in range(CHANNELS)]  # RGBA, then hidden
-    return np.vstack([np.hstack(tiles[r * 4:(r + 1) * 4]) for r in range(4)])
+    c = x.shape[0]
+    tiles = [np.pad(ca.to_heatmap(x, i), 1, constant_values=255) for i in range(c)]  # visible, then hidden
+    tiles += [np.full_like(tiles[0], 255)] * (-c % 4)
+    return np.vstack([np.hstack(tiles[r * 4:(r + 1) * 4]) for r in range(math.ceil(c / 4))])
 
 
 @st.fragment(run_every=FRAME_SECONDS if st.session_state.playing else None)
@@ -117,19 +139,22 @@ board()
 
 with st.expander("How it works"):
     st.markdown(f"""
-The grid is 64×64 cells, each holding 16 numbers: color and opacity (RGBA) plus 12 hidden "chemical" channels.
-Each step, every cell:
+The grid is {grid}×{grid} cells, each holding {cfg["channels"]} numbers: {n_visible} visible color channels plus
+{cfg["channels"] - n_visible} hidden "chemical" channels. Each step, every cell:
 
 1. **Perceives** its 3×3 neighborhood with fixed filters: its own state, and horizontal and vertical gradients
-   (Sobel), giving 48 numbers.
-2. **Updates** by passing those through a small network shared by all cells: 48 → 128 (ReLU) → 16, added to its
-   state. Only a random half of cells update each step, so the cells can't rely on a global clock.
-3. **Lives or dies**: a cell with no neighbor above 0.1 opacity is cleared to empty.
+   (Sobel), giving {3 * cfg["channels"]} numbers.
+2. **Updates** by passing those through a small network shared by all cells: {3 * cfg["channels"]} →
+   {cfg["hidden"]} (ReLU) → {cfg["channels"]}, added to its state. Only a random half of cells update each step,
+   so the cells can't rely on a global clock.
+3. **Lives or dies** (mountain only): a cell with no neighbor above 0.1 opacity is cleared to empty. The texture
+   has no empty space: every cell is alive, and the grid wraps around at the edges.
 
-Training starts from the seed, runs 64–96 steps, and compares the RGBA channels to the emoji. A pool of past
-states is fed back in, and some are damaged, so the rule learns to keep the mountain stable and regrow missing
-parts, not only grow it once.
-"""
-    + (f"\nCode: [{REPO.removeprefix('https://')}]({REPO})." if REPO else ""))
+The mountain is trained to match the emoji pixel by pixel. The texture is trained to match the *style* of a
+contour map: the feature statistics a pretrained image network (VGG16) sees, not the exact pixels. Both train on a
+pool of past states, some damaged, so the rule learns to stay stable and repair, not only grow once.
 
-st.caption("Emoji: Noto Emoji 🏔️ by Google, Apache License 2.0.")
+Code: [{REPO.removeprefix("https://")}]({REPO}).
+""")
+
+st.caption("Emoji: Noto Emoji 🏔️ by Google, Apache License 2.0. Contour map: generated (tools/make_topo_texture.py).")
