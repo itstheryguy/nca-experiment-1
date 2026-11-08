@@ -4,6 +4,11 @@ A PyTorch Neural Cellular Automaton that grows the 🏔️ emoji from a single s
 it after damage, after [Growing Neural Cellular Automata](https://distill.pub/2020/growing-ca/) (Mordvintsev et
 al., 2020). Deployed as a static Hugging Face Space that runs in the browser with stlite.
 
+<img src="assets/grow.gif" width="256" alt="The mountain growing from one cell, cut in half at step 300, and regrowing">
+
+Growing from one cell, then cut in half at step 300 and regrowing. 8,000 training iterations (50 minutes on an
+M1 Pro), final loss 0.0034; stable through at least 2,000 steps.
+
 | Path | What |
 |---|---|
 | `nca.py` | Model (`CAModel`), seed, target loading, damage, weight export |
