@@ -3,14 +3,16 @@
 Cells are NCA (0), RED (1, an active agent), BLACK (2, a dead agent), or BLUE (3, frozen). One chaos tick:
 
 1. Thaw: each BLUE becomes an empty NCA cell with probability `thaw`.
-2. Freeze: each BLACK becomes BLUE with probability `freeze`.
+2. Resolve: each BLACK resolves with probability `freeze`: into an empty NCA cell with probability
+   `black_to_nca`, otherwise into BLUE.
 3. Retake: each RED or BLACK cell touching a living NCA cell (8 neighbors) is reclaimed by the NCA with
    probability `retake_red` / `retake_black`, and becomes an empty NCA cell. Living: alpha > 0.1 for models with
-   an alive mask, any NCA cell otherwise.
+   an alive mask, any NCA cell otherwise. With `empty_defends`, every NCA cell counts, empty or not.
 4. Agents act: each RED rolls 0-99 and looks up the preset's table. `spread` claims the nearest NCA or BLACK
    cells, ring by ring (random order within a ring). NCA cells are always taken; BLACK cells resist with
    probability `black_resist`. `cod` is the chance the agent dies (becomes BLACK) after acting, `die` kills it
-   outright, and `spawn` places new agents at random cells anywhere.
+   outright, and `spawn` places new agents at random cells anywhere. `sabotage` kills the agent and each RED
+   neighbor (8 cells) with probability `sabotage_kill`.
 
 Chaos cells are written into the NCA state as fixed colors (alpha 0, hidden channels 0), so the NCA perceives them
 through its normal 3x3 view but can't change them, and they never count as alive.
@@ -51,12 +53,17 @@ def load_presets(src):
 
 def compile_preset(p):
     """Preset dict -> lookup arrays indexed by roll (0-99), plus the scalar rates."""
-    spread, cod, spawn, die = np.zeros(100, np.int64), np.zeros(100), np.zeros(100, np.int64), np.zeros(100, bool)
+    spread, cod, spawn = np.zeros(100, np.int64), np.zeros(100), np.zeros(100, np.int64)
+    die, sabotage = np.zeros(100, bool), np.zeros(100, bool)
     for row in p["table"]:
         r = slice(row["lo"], row["hi"] + 1)
-        spread[r], cod[r], spawn[r], die[r] = row.get("spread", 0), row.get("cod", 0.0), row.get("spawn", 0), row.get("die", False)
+        spread[r], cod[r], spawn[r] = row.get("spread", 0), row.get("cod", 0.0), row.get("spawn", 0)
+        die[r], sabotage[r] = row.get("die", False), row.get("sabotage", False)
     out = {k: p[k] for k in ("freeze", "thaw", "retake_red", "retake_black", "black_resist")}
-    return out | {"label": p.get("label", ""), "spread": spread, "cod": cod, "spawn": spawn, "die": die}
+    out |= {"black_to_nca": p.get("black_to_nca", 0.0), "sabotage_kill": p.get("sabotage_kill", 0.0),
+            "every": p.get("every", 1), "empty_defends": bool(p.get("empty_defends", False)),
+            "label": p.get("label", "")}
+    return out | {"spread": spread, "cod": cod, "spawn": spawn, "die": die, "sabotage": sabotage}
 
 
 def signature(cfg):
@@ -92,9 +99,13 @@ def tick(chaos, x, cfg, P, rand):
     thaw = (c == BLUE) & (rand((h, w)) < P["thaw"])
     c[thaw] = NCA
     cleared |= thaw
-    c[(c == BLACK) & (rand((h, w)) < P["freeze"])] = BLUE
+    resolve = (c == BLACK) & (rand((h, w)) < P["freeze"])
+    to_nca = resolve & (rand((h, w)) < P["black_to_nca"])
+    c[resolve] = BLUE
+    c[to_nca] = NCA
+    cleared |= to_nca
 
-    living = (c == NCA) & (x[3] > 0.1 if cfg["alive_mask"] else True)
+    living = (c == NCA) & (x[3] > 0.1 if cfg["alive_mask"] and not P["empty_defends"] else True)
     p_retake = np.where(c == RED, P["retake_red"], np.where(c == BLACK, P["retake_black"], 0.0))
     retake = _touching(living, wrap) & (rand((h, w)) < p_retake)
     c[retake] = NCA
@@ -103,7 +114,11 @@ def tick(chaos, x, cfg, P, rand):
     agents = np.flatnonzero(c == RED)
     roll = np.minimum((rand((agents.size,)) * 100).astype(np.int64), 99)
     spread, spawn = P["spread"][roll], P["spawn"][roll]
-    dies = P["die"][roll] | (rand((agents.size,)) < P["cod"][roll])
+    sab = P["sabotage"][roll]
+    dies = P["die"][roll] | sab | (rand((agents.size,)) < P["cod"][roll])
+    saboteurs = np.zeros(h * w, bool)
+    saboteurs[agents[sab]] = True
+    victims = (_touching(saboteurs.reshape(h, w), wrap) & (c == RED) & (rand((h, w)) < P["sabotage_kill"])).ravel()
     snap = c.ravel().copy()
     new_red = []
 
@@ -129,6 +144,7 @@ def tick(chaos, x, cfg, P, rand):
 
     flat = c.ravel()
     flat[agents[dies]] = BLACK
+    flat[victims] = BLACK
     if new_red:
         t = np.concatenate(new_red)
         t = t[(snap[t] == NCA) | ((snap[t] == BLACK) & (rand((t.size,)) >= P["black_resist"]))]

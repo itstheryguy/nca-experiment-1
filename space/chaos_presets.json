@@ -1,39 +1,157 @@
 {
-  "_doc": "Chaos agent presets. Each red agent rolls 0-99 once per chaos tick and looks up the first row whose [lo, hi] contains the roll. spread: claim this many nearest cells. cod: chance this agent dies after acting. die: the agent dies (becomes black) without acting. spawn: also place this many new agents at random cells anywhere. Rolls not covered by any row do nothing. freeze: chance per tick a black cell becomes blue. thaw: chance per tick a blue cell becomes an empty NCA cell. retake_red / retake_black: chance per tick the NCA reclaims a red / black cell that touches a living NCA cell. black_resist: chance a black cell resists an agent spreading into it. These are first guesses; the Monte Carlo balance runs tune them.",
+  "_doc": "Chaos agent presets. Each red agent rolls 0-99 once per chaos tick and looks up the first row whose [lo, hi] contains the roll. spread: claim this many nearest cells. cod: chance this agent dies after acting. die: the agent dies (becomes black) without acting. sabotage: the agent dies and takes each neighboring agent with it with probability sabotage_kill. spawn: also place this many new agents at random cells anywhere. Rolls not covered by any row do nothing. freeze: chance per tick a black cell resolves; it becomes an empty NCA cell with probability black_to_nca, otherwise blue. thaw: chance per tick a blue cell becomes an empty NCA cell. retake_red / retake_black: chance per tick the NCA reclaims a red / black cell that touches a living NCA cell. black_resist: chance a black cell resists an agent spreading into it. every: NCA steps per chaos tick (the Space's default for the slider).",
   "brushfire": {
     "label": "Brushfire (the original table)",
     "table": [
-      {"lo": 0,  "hi": 5,  "die": true},
-      {"lo": 6,  "hi": 20, "spread": 1},
-      {"lo": 21, "hi": 50, "spread": 1, "cod": 0.5},
-      {"lo": 51, "hi": 60, "spread": 2, "cod": 0.5},
-      {"lo": 61, "hi": 70, "spread": 3, "cod": 0.5},
-      {"lo": 71, "hi": 73, "spread": 10},
-      {"lo": 74, "hi": 74, "spread": 20, "spawn": 1}
+      {
+        "lo": 0,
+        "hi": 5,
+        "die": true
+      },
+      {
+        "lo": 6,
+        "hi": 20,
+        "spread": 1
+      },
+      {
+        "lo": 21,
+        "hi": 50,
+        "spread": 1,
+        "cod": 0.5
+      },
+      {
+        "lo": 51,
+        "hi": 60,
+        "spread": 2,
+        "cod": 0.5
+      },
+      {
+        "lo": 61,
+        "hi": 70,
+        "spread": 3,
+        "cod": 0.5
+      },
+      {
+        "lo": 71,
+        "hi": 73,
+        "spread": 10
+      },
+      {
+        "lo": 74,
+        "hi": 74,
+        "spread": 20,
+        "spawn": 1
+      },
+      {
+        "lo": 75,
+        "hi": 84,
+        "sabotage": true
+      }
     ],
-    "freeze": 0.1, "thaw": 0.0, "retake_red": 0.2, "retake_black": 0.8, "black_resist": 0.2
+    "freeze": 0.1,
+    "thaw": 0.0,
+    "retake_red": 0.2,
+    "retake_black": 0.8,
+    "black_resist": 0.2,
+    "sabotage_kill": 0.5,
+    "black_to_nca": 0.5,
+    "every": 2
   },
   "smolder": {
     "label": "Smolder (slow, burns out often)",
     "table": [
-      {"lo": 0,  "hi": 19, "die": true},
-      {"lo": 20, "hi": 39, "spread": 1, "cod": 0.5},
-      {"lo": 40, "hi": 49, "spread": 2, "cod": 0.5},
-      {"lo": 50, "hi": 50, "spread": 10}
+      {
+        "lo": 0,
+        "hi": 19,
+        "die": true
+      },
+      {
+        "lo": 20,
+        "hi": 39,
+        "spread": 1,
+        "cod": 0.5
+      },
+      {
+        "lo": 40,
+        "hi": 49,
+        "spread": 2,
+        "cod": 0.5
+      },
+      {
+        "lo": 50,
+        "hi": 50,
+        "spread": 10
+      },
+      {
+        "lo": 51,
+        "hi": 60,
+        "sabotage": true
+      }
     ],
-    "freeze": 0.1, "thaw": 0.0, "retake_red": 0.2, "retake_black": 0.8, "black_resist": 0.2
+    "freeze": 0.1,
+    "thaw": 0.0,
+    "retake_red": 0.2,
+    "retake_black": 0.8,
+    "black_resist": 0.2,
+    "sabotage_kill": 0.5,
+    "black_to_nca": 0.5,
+    "every": 2
   },
   "wildfire": {
     "label": "Wildfire (big jumps, few deaths)",
     "table": [
-      {"lo": 0,  "hi": 2,  "die": true},
-      {"lo": 3,  "hi": 30, "spread": 1},
-      {"lo": 31, "hi": 50, "spread": 2, "cod": 0.5},
-      {"lo": 51, "hi": 60, "spread": 3, "cod": 0.5},
-      {"lo": 61, "hi": 66, "spread": 10},
-      {"lo": 67, "hi": 68, "spread": 20, "spawn": 1},
-      {"lo": 69, "hi": 69, "spread": 40, "spawn": 1}
+      {
+        "lo": 0,
+        "hi": 2,
+        "die": true
+      },
+      {
+        "lo": 3,
+        "hi": 30,
+        "spread": 1
+      },
+      {
+        "lo": 31,
+        "hi": 50,
+        "spread": 2,
+        "cod": 0.5
+      },
+      {
+        "lo": 51,
+        "hi": 60,
+        "spread": 3,
+        "cod": 0.5
+      },
+      {
+        "lo": 61,
+        "hi": 66,
+        "spread": 10
+      },
+      {
+        "lo": 67,
+        "hi": 68,
+        "spread": 20,
+        "spawn": 1
+      },
+      {
+        "lo": 69,
+        "hi": 69,
+        "spread": 40,
+        "spawn": 1
+      },
+      {
+        "lo": 70,
+        "hi": 79,
+        "sabotage": true
+      }
     ],
-    "freeze": 0.1, "thaw": 0.0, "retake_red": 0.2, "retake_black": 0.8, "black_resist": 0.2
+    "freeze": 0.1,
+    "thaw": 0.0,
+    "retake_red": 0.2,
+    "retake_black": 0.8,
+    "black_resist": 0.2,
+    "sabotage_kill": 0.5,
+    "black_to_nca": 0.5,
+    "every": 2
   }
 }

@@ -36,6 +36,7 @@ class Chaos:
         t = lambda a, dt=None: torch.as_tensor(a, device=device, dtype=dt)  # noqa: E731
         self.spread, self.cod = t(preset["spread"], torch.long), t(preset["cod"], torch.float32)
         self.spawn, self.die = t(preset["spawn"], torch.long), t(preset["die"], torch.bool)
+        self.sabotage = t(preset["sabotage"], torch.bool)
         self.off_y, self.off_x = t(cn.OFF_Y, torch.long), t(cn.OFF_X, torch.long)
         self.off_d2 = t(cn.OFF_D2, torch.float32)
         self.sig = t(cn.signature(cfg if isinstance(cfg, dict) else vars(cfg)), torch.float32)
@@ -70,10 +71,14 @@ class Chaos:
         thaw = (c == BLUE) & (rand((b, h, w)) < P["thaw"])
         c[thaw] = NCA
         cleared |= thaw
-        c[(c == BLACK) & (rand((b, h, w)) < P["freeze"])] = BLUE
+        resolve = (c == BLACK) & (rand((b, h, w)) < P["freeze"])
+        to_nca = resolve & (rand((b, h, w)) < P["black_to_nca"])
+        c[resolve] = BLUE
+        c[to_nca] = NCA
+        cleared |= to_nca
 
         living = c == NCA
-        if self._alive_mask:
+        if self._alive_mask and not P["empty_defends"]:
             living &= x[:, 3] > 0.1
         p_retake = torch.where(c == RED, P["retake_red"], torch.where(c == BLACK, P["retake_black"], 0.0))
         retake = self._touching(living) & (rand((b, h, w)) < p_retake)
@@ -83,7 +88,12 @@ class Chaos:
         agents = torch.nonzero(c.flatten() == RED)[:, 0]
         roll = (rand((agents.numel(),)) * 100).long().clamp(max=99)
         spread, spawn = self.spread[roll], self.spawn[roll]
-        dies = self.die[roll] | (rand((agents.numel(),)) < self.cod[roll])
+        sab = self.sabotage[roll]
+        dies = self.die[roll] | sab | (rand((agents.numel(),)) < self.cod[roll])
+        saboteurs = torch.zeros(b * hw, dtype=torch.bool, device=c.device)
+        saboteurs[agents[sab]] = True
+        victims = (self._touching(saboteurs.view(b, h, w)) & (c == RED)
+                   & (rand((b, h, w)) < P["sabotage_kill"])).flatten()
         snap = c.flatten().clone()
         new_red = []
 
@@ -112,6 +122,7 @@ class Chaos:
 
         flat = c.flatten()
         flat[agents[dies]] = BLACK
+        flat[victims] = BLACK
         if new_red:
             t = torch.cat(new_red)
             st = snap[t]

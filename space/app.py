@@ -121,7 +121,7 @@ with st.container(border=True):
         start = k2.number_input("Chaos starts at step", 0, 5000, 150 if cfg["alive_mask"] else 100, step=10,
                                 help="0 starts it together with the NCA. The default lets the NCA form first.")
         k3, k4 = st.columns(2)
-        every = k3.slider("NCA steps per chaos tick", 1, 5, 1)
+        every = k3.slider("NCA steps per chaos tick", 1, 5, int(presets()[preset]["every"]))
         thaw = k4.slider("Thaw rate", 0.0, 1.0, float(presets()[preset]["thaw"]), 0.05,
                          help="Chance per tick that a frozen (blue) cell thaws back to an empty NCA cell. "
                               "0 means frozen cells are permanent, so every run eventually ends.")
@@ -221,11 +221,11 @@ with st.expander("The chaos agent"):
 Cells are either **NCA**, 🟥 **active agents**, ⬛ **dead agents**, or 🟦 **frozen**. Each chaos tick:
 
 1. Frozen cells thaw back to empty NCA cells at the thaw rate (0 by default: frozen is permanent).
-2. Dead agents freeze with probability 0.1.
+2. Dead agents resolve with probability 0.1: half become empty NCA cells, half freeze.
 3. The NCA reclaims chaos cells that touch a living NCA cell: active agents with probability 0.2, dead ones 0.8.
 4. Every active agent rolls 0-99 on its preset's table: die, spread to the nearest 1-40 cells (always succeeding on
-   NCA cells, mountain or empty alike; dead cells resist 20% of the time), die after spreading, or spawn new
-   agents anywhere on the grid.
+   NCA cells, mountain or empty alike; dead cells resist 20% of the time), die after spreading, spawn new
+   agents anywhere on the grid, or sabotage: die and take each neighboring agent with it half the time.
 
 The NCA sees chaos cells as fixed colors through its normal 3×3 view, but can't change them. With permanent freezing,
 every run eventually ends: chaos burns out, and what's left is NCA and frozen cells.

@@ -8,6 +8,7 @@ out, the final share of NCA / blue cells, and (for the mountain) image integrity
 """
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -33,7 +34,7 @@ def integrity(x, c, ch, target_rgb):
 
 
 @torch.no_grad()
-def simulate(model, exp, preset, n=128, start=150, every=1, max_steps=3000, settle=200, device="cpu", seed=0):
+def simulate(model, exp, preset, n=128, start=150, every=1, max_steps=5000, settle=200, device="cpu", seed=0):
     gen = torch.Generator(device=device).manual_seed(seed)
     torch.manual_seed(seed)
     rand = chaos.torch_rand(device, gen)
@@ -62,12 +63,23 @@ def simulate(model, exp, preset, n=128, start=150, every=1, max_steps=3000, sett
     return out
 
 
-def summarize(name, r, start=150):
+def variant(preset_raw, original=False, **overrides):
+    """A preset, optionally reverted to the original rules (no sabotage, dead agents always freeze blue, 1:1 ticks)."""
+    p = json.loads(json.dumps(preset_raw))
+    if original:
+        p["table"] = [row for row in p["table"] if not row.get("sabotage")]
+        p.update(black_to_nca=0.0, sabotage_kill=0.0, every=1)
+    p.update({k: v for k, v in overrides.items() if v is not None})
+    return chaos.cn.compile_preset(p)
+
+
+def summarize(name, r, start=150, every=1):
     b = r["burnout_step"]
     done = b >= 0
     fizzled = done & (b - start <= 20)
-    line = (f"{name:10s} fizzled within 20 steps {fizzled.mean():4.0%}, burned out {done.mean():4.0%}"
-            f" (median step {np.median(b[done]) if done.any() else float('nan'):5.0f})"
+    ticks = (b[done] - start) / every
+    line = (f"{name:10s} fizzled {fizzled.mean():4.0%}, finished {done.mean():4.0%}"
+            f" in {ticks.mean() if done.any() else float('nan'):4.0f} ticks avg ({np.median(ticks) if done.any() else float('nan'):4.0f} median)"
             f" | final NCA {np.median(r['final_nca']):4.0%}  blue {np.median(r['final_blue']):4.0%}"
             f" | peak red {np.median(r['peak_red']):4.0%}")
     if "integrity" in r:
@@ -82,15 +94,19 @@ if __name__ == "__main__":
     ap.add_argument("--presets", nargs="+", default=["brushfire", "smolder", "wildfire"])
     ap.add_argument("--n", type=int, default=128)
     ap.add_argument("--start", type=int, default=150)
-    ap.add_argument("--every", type=int, default=1)
+    ap.add_argument("--every", type=int, default=None, help="NCA steps per chaos tick (default: the preset's)")
+    ap.add_argument("--thaw", type=float, default=None)
+    ap.add_argument("--empty-defends", action="store_true", help="every NCA cell can retake chaos, not just living ones")
+    ap.add_argument("--original", action="store_true", help="the original rules: no sabotage, dead agents always freeze")
     ap.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu")
     a = ap.parse_args()
 
     exp = train.EXPERIMENTS[a.experiment]
     model = nca.CAModel(exp.ca).to(a.device).eval()
     model.load_state_dict(torch.load(ROOT / "models" / f"{exp.name}.pth", map_location=a.device))
-    presets = chaos.load_presets()
+    raw = json.loads(chaos.PRESETS_PATH.read_text())
     for p in a.presets:
+        preset = variant(raw[p], a.original, thaw=a.thaw, every=a.every, empty_defends=a.empty_defends or None)
         t = time.time()
-        r = simulate(model, exp, presets[p], n=a.n, start=a.start, every=a.every, device=a.device)
-        print(summarize(p, r, a.start), f"| {r['steps_run']} steps, {time.time() - t:.0f}s", flush=True)
+        r = simulate(model, exp, preset, n=a.n, start=a.start, every=preset["every"], device=a.device)
+        print(summarize(p, r, a.start, preset["every"]), f"| {r['steps_run']} steps, {time.time() - t:.0f}s", flush=True)
