@@ -20,4 +20,6 @@ The app runs entirely in your browser ([stlite](https://github.com/whitphx/stlit
 weights are exported to `nca_mountain.npz` and the Space steps the automaton with a numpy port of the model,
 since Pyodide has no PyTorch. A parity test checks that the two implementations agree.
 
+Code: [github.com/itstheryguy/nca-experiment-1](https://github.com/itstheryguy/nca-experiment-1).
+
 Emoji: [Noto Emoji](https://github.com/googlefonts/noto-emoji) by Google, Apache License 2.0.

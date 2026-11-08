@@ -14,7 +14,7 @@ import nca_numpy as ca
 
 HERE = Path(__file__).parent
 CHANNELS, GRID, SCALE = 16, 64, 8
-REPO = ""  # set to the GitHub repo URL once it exists
+REPO = "https://github.com/itstheryguy/nca-experiment-1"
 PAPER = "https://distill.pub/2020/growing-ca/"
 VIEWS = ["Color", "Hidden channel", "All 16 channels"]
 
