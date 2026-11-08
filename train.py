@@ -4,6 +4,7 @@ train.ipynb is a thin driver around `Trainer`, and runs the same locally (MPS) o
 """
 
 import csv
+import json
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -63,15 +64,22 @@ TEXTURE = Experiment(
 # without active agents get a spark with probability spark_prob. Samples where chaos holds more than clear_above of
 # the grid, or burned out (with probability clear_burned_out), have their chaos cleared back to empty NCA cells, so
 # the pool keeps a mix of fresh fights, ongoing fights, and aftermaths to regrow from.
+#
+# v1.1 (after v1 came out worse than the base mountain):
+# - counter_seed is turned off in training. Counter-seeds grow extra mountains, which the one-mountain target
+#   punishes, so v1 learned to resist growing from seeds: slower, hazier growth and ~1% of seeds dying out.
+#   The Space keeps counter-seeds on, so the model meets them there as something new.
+# - chaos_free: this share of iterations runs with no chaos ticks or sparks, so plain growth keeps being practiced.
+# - Fine-tuning learning rate 1e-3 -> 5e-4 (in the experiment below).
 CHAOS = {"presets": ["smolder", "brushfire", "wildfire"], "spark_prob": 0.3, "clear_above": 0.5,
-         "clear_burned_out": 0.3}
+         "clear_burned_out": 0.3, "overrides": {"counter_seed": 0.0}, "chaos_free": 0.5}
 
 EXPERIMENTS = {
     "mountain": MOUNTAIN,
     "texture": TEXTURE,
     # Fine-tuned from the base models: they already grow; here they learn to live with chaos.
     "mountain_chaos": replace(MOUNTAIN, name="mountain_chaos", chaos=CHAOS, init_from="models/mountain.pth",
-                              iters=4000, lr=1e-3, lr_drop_at=(2500,), n_damaged=1),
+                              iters=4000, lr=5e-4, lr_drop_at=(2500,), n_damaged=1, notes="v1.1"),
     "texture_chaos": replace(TEXTURE, name="texture_chaos", chaos=CHAOS, init_from="models/texture.pth",
                              iters=3000, lr=1e-3, lr_drop_at=(2000,), n_damaged=0),
 }
@@ -125,8 +133,10 @@ class Trainer:
         if exp.chaos:
             import chaos
 
-            presets = chaos.load_presets()
-            self.chaos = [chaos.Chaos(presets[name], exp.ca, device) for name in exp.chaos["presets"]]
+            raw = json.loads(chaos.PRESETS_PATH.read_text())
+            overrides = exp.chaos.get("overrides", {})
+            self.chaos = [chaos.Chaos(chaos.cn.compile_preset(raw[name] | overrides), exp.ca, device)
+                          for name in exp.chaos["presets"]]
             self.rand = chaos.torch_rand(device)
             if exp.init_from:  # start the pool from grown states, so chaos meets a formed pattern
                 with torch.no_grad():
@@ -158,6 +168,7 @@ class Trainer:
 
     def batch(self):
         exp = self.exp
+        self.chaos_free = bool(exp.chaos) and torch.rand(()).item() < exp.chaos.get("chaos_free", 0.0)
         idx = torch.randperm(exp.pool_size, device=self.device)[: exp.batch]
         x, c = self.pool[idx].clone(), self.pool_chaos[idx].clone()
         with torch.no_grad():
@@ -185,6 +196,8 @@ class Trainer:
             c = torch.where(clear[:, None, None], 0, c)
         no_agents = ~(c == 1).flatten(1).any(1)
         spark = no_agents & (torch.rand(b, device=c.device) < cfg["spark_prob"])
+        if self.chaos_free:
+            spark[:] = False
         if reseeded:
             spark[0] = False  # let a fresh seed grow before chaos arrives
         c = self.chaos[0].spark(c, self.rand, spark)
@@ -193,6 +206,10 @@ class Trainer:
     def grow(self, x, c, steps):
         if not self.exp.chaos:
             return self.model.grow(x, steps), c
+        if self.chaos_free:  # no ticks: existing chaos cells stay as they are, the NCA just grows
+            for _ in range(steps):
+                x = self.chaos[0].clamp(self.model(x), c)
+            return x, c
         ch = self.chaos[int(torch.randint(len(self.chaos), ()))]
         every = int(ch.P["every"])
         for i in range(steps):
