@@ -6,7 +6,7 @@ colorTo: green
 sdk: static
 pinned: false
 license: mit
-short_description: A neural cellular automaton that grows and regrows a mountain.
+short_description: Neural cellular automaton that grows and regrows a mountain
 ---
 
 # Growing a mountain with a Neural Cellular Automaton
