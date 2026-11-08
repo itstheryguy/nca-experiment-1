@@ -33,25 +33,36 @@ def _filter3x3(x, k):
     return out
 
 
+def _max3x3(a):
+    """3x3 neighborhood max of a 2D array, zero padded."""
+    h, w = a.shape
+    p = np.pad(a, 1)
+    return np.max([p[i:i + h, j:j + w] for i in range(3) for j in range(3)], axis=0)
+
+
 def _alive(x):
     """3x3 max of alpha > threshold. Zero padding is fine: zero never exceeds the threshold."""
-    _, h, w = x.shape
-    p = np.pad(x[3], 1)
-    m = np.max([p[i:i + h, j:j + w] for i in range(3) for j in range(3)], axis=0)
-    return m > ALIVE_THRESHOLD
+    return _max3x3(x[3]) > ALIVE_THRESHOLD
 
 
 def step(x, wts, rng, fire_rate=None):
-    """One CA step. Returns a new (C, H, W) array."""
+    """One CA step. Returns a new (C, H, W) array.
+
+    Same result as CAModel.forward, but the MLP only runs on cells that fire and lie within one cell of a live
+    cell. Cells farther out end up zeroed by the life mask, and can't change any kept cell's post-update life
+    test, so their update never matters. Under WebAssembly (no fast BLAS) this is about 4x faster.
+    """
     fire_rate = wts["fire_rate"] if fire_rate is None else fire_rate
     c, h, w = x.shape
     pre_life = _alive(x)
-    # (3C, H, W), interleaved per channel [c0, c0_dx, c0_dy, c1, ...] to match the torch depthwise conv
-    y = np.stack([x, _filter3x3(x, SOBEL_X), _filter3x3(x, SOBEL_Y)], axis=1).reshape(3 * c, h, w)
-    hid = np.maximum(wts["w1"] @ y.reshape(3 * c, -1) + wts["b1"][:, None], 0)
-    dx = (wts["w2"] @ hid).reshape(c, h, w)
     fire = rng.random((h, w)) <= fire_rate
-    x = x + dx * fire
+    idx = np.flatnonzero(fire & _max3x3(pre_life))
+    # (3C, H, W), interleaved per channel [c0, c0_dx, c0_dy, c1, ...] to match the torch depthwise conv
+    y = np.stack([x, _filter3x3(x, SOBEL_X), _filter3x3(x, SOBEL_Y)], axis=1).reshape(3 * c, h * w)
+    hid = np.maximum(wts["w1"] @ y[:, idx] + wts["b1"][:, None], 0)
+    x = x.reshape(c, h * w).copy()
+    x[:, idx] += wts["w2"] @ hid
+    x = x.reshape(c, h, w)
     life = pre_life & _alive(x)
     return (x * life).astype(np.float32)
 
