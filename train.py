@@ -33,7 +33,8 @@ class Experiment:
     n_damaged: int = 3                  # pool samples per batch hit with an erased circle
     reseed_every: int = 1               # replace one pool sample with a fresh seed every N iterations
     overflow_weight: float = 0.0        # penalty for state values outside [-1, 1]
-    chaos: dict | None = None           # chaos agent settings (see chaos.py, not built yet)
+    chaos: dict | None = None           # chaos agent settings, see CHAOS below
+    init_from: str | None = None        # start from these weights (.pth) instead of from scratch
     notes: str = field(default="", repr=False)
 
 
@@ -58,11 +59,21 @@ TEXTURE = Experiment(
     overflow_weight=1e-2,
 )
 
+# Chaos training: each iteration picks one preset at random, so the model sees light to heavy chaos. Pool samples
+# without active agents get a spark with probability spark_prob. Samples where chaos holds more than clear_above of
+# the grid, or burned out (with probability clear_burned_out), have their chaos cleared back to empty NCA cells, so
+# the pool keeps a mix of fresh fights, ongoing fights, and aftermaths to regrow from.
+CHAOS = {"presets": ["smolder", "brushfire", "wildfire"], "spark_prob": 0.3, "clear_above": 0.5,
+         "clear_burned_out": 0.3}
+
 EXPERIMENTS = {
     "mountain": MOUNTAIN,
     "texture": TEXTURE,
-    "mountain_chaos": replace(MOUNTAIN, name="mountain_chaos", chaos={}),
-    "texture_chaos": replace(TEXTURE, name="texture_chaos", chaos={}),
+    # Fine-tuned from the base models: they already grow; here they learn to live with chaos.
+    "mountain_chaos": replace(MOUNTAIN, name="mountain_chaos", chaos=CHAOS, init_from="models/mountain.pth",
+                              iters=4000, lr=1e-3, lr_drop_at=(2500,), n_damaged=1),
+    "texture_chaos": replace(TEXTURE, name="texture_chaos", chaos=CHAOS, init_from="models/texture.pth",
+                             iters=3000, lr=1e-3, lr_drop_at=(2000,), n_damaged=0),
 }
 
 
@@ -102,14 +113,25 @@ class Trainer:
     """Holds model, optimizer, and pool, so `run` can be called again to continue training."""
 
     def __init__(self, exp: Experiment, device, out_dir="checkpoints", seed=0):
-        if exp.chaos is not None:
-            raise NotImplementedError("chaos training isn't built yet: the chaos agent rules are still being decided")
         torch.manual_seed(seed)
         self.exp, self.device = exp, device
         self.model = nca.CAModel(exp.ca).to(device)
+        if exp.init_from:
+            self.model.load_state_dict(torch.load(exp.init_from, map_location=device))
         self.opt = torch.optim.Adam(self.model.parameters(), lr=exp.lr)
         self.sched = torch.optim.lr_scheduler.MultiStepLR(self.opt, milestones=list(exp.lr_drop_at), gamma=0.1)
         self.pool = nca.make_seed(exp.ca, exp.pool_size, exp.grid, device)
+        self.pool_chaos = torch.zeros(exp.pool_size, exp.grid, exp.grid, dtype=torch.long, device=device)
+        if exp.chaos:
+            import chaos
+
+            presets = chaos.load_presets()
+            self.chaos = [chaos.Chaos(presets[name], exp.ca, device) for name in exp.chaos["presets"]]
+            self.rand = chaos.torch_rand(device)
+            if exp.init_from:  # start the pool from grown states, so chaos meets a formed pattern
+                with torch.no_grad():
+                    for i in range(0, exp.pool_size, 256):
+                        self.pool[i:i + 256] = self.model.grow(self.pool[i:i + 256], exp.steps[1])
         self.losses, self.it = [], 0
         self.out_dir = Path(out_dir) / exp.name
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -119,9 +141,14 @@ class Trainer:
             self.target = nca.load_texture(exp.target, size=2 * exp.grid).to(device)
             self.style = StyleLoss(self.target, device)
 
-    def per_sample_loss(self, x):
+    def per_sample_loss(self, x, c=None):
         if self.exp.loss == "pixel":
-            loss = ((x[:, :4] - self.target) ** 2).mean(dim=(1, 2, 3))
+            err = (x[:, :4] - self.target) ** 2
+            if c is None:
+                loss = err.mean(dim=(1, 2, 3))
+            else:  # chaos cells are out of the NCA's control: score only the cells it owns
+                m = (c == 0)[:, None].float()
+                loss = (err * m).sum(dim=(1, 2, 3)) / (4 * m.sum(dim=(1, 2, 3))).clamp(min=1)
         else:
             img = F.interpolate(nca.rgb(x, self.exp.ca), scale_factor=2, mode="bilinear", align_corners=False)
             loss = self.style(img)
@@ -132,16 +159,47 @@ class Trainer:
     def batch(self):
         exp = self.exp
         idx = torch.randperm(exp.pool_size, device=self.device)[: exp.batch]
-        x = self.pool[idx].clone()
+        x, c = self.pool[idx].clone(), self.pool_chaos[idx].clone()
         with torch.no_grad():
             if exp.loss == "pixel":  # worst first, so the worst sample is the one reseeded
-                order = self.per_sample_loss(x).argsort(descending=True)
-                x, idx = x[order], idx[order]
-            if self.it % exp.reseed_every == 0:
+                order = self.per_sample_loss(x, c if exp.chaos else None).argsort(descending=True)
+                x, c, idx = x[order], c[order], idx[order]
+            reseeded = self.it % exp.reseed_every == 0
+            if reseeded:
                 x[:1] = nca.make_seed(exp.ca, 1, exp.grid, self.device)
+                c[:1] = 0
             if exp.n_damaged:
                 nca.damage(x[-exp.n_damaged:])
-        return x, idx
+            if exp.chaos:
+                x, c = self.manage_chaos(x, c, reseeded)
+        return x, c, idx
+
+    def manage_chaos(self, x, c, reseeded):
+        """Clear saturated or burned-out chaos, and spark samples that have no active agents."""
+        cfg, b = self.exp.chaos, x.shape[0]
+        frac_chaos = (c > 0).flatten(1).float().mean(1)
+        burned_out = ((c > 0).flatten(1).any(1)) & ~((c == 1).flatten(1).any(1))
+        clear = (frac_chaos > cfg["clear_above"]) | (burned_out & (torch.rand(b, device=c.device) < cfg["clear_burned_out"]))
+        if clear.any():
+            x = torch.where((clear[:, None, None] & (c > 0))[:, None], 0.0, x)
+            c = torch.where(clear[:, None, None], 0, c)
+        no_agents = ~(c == 1).flatten(1).any(1)
+        spark = no_agents & (torch.rand(b, device=c.device) < cfg["spark_prob"])
+        if reseeded:
+            spark[0] = False  # let a fresh seed grow before chaos arrives
+        c = self.chaos[0].spark(c, self.rand, spark)
+        return self.chaos[0].clamp(x, c), c
+
+    def grow(self, x, c, steps):
+        if not self.exp.chaos:
+            return self.model.grow(x, steps), c
+        ch = self.chaos[int(torch.randint(len(self.chaos), ()))]
+        every = int(ch.P["every"])
+        for i in range(steps):
+            x = ch.clamp(self.model(x), c)
+            if i % every == 0:
+                c, x = ch.tick(c, x, self.rand)
+        return x, c
 
     def run(self, iters=None, on_progress=None, every=100):
         """Train until iteration `iters` (default: the experiment's). Calls on_progress(trainer, before, after)
@@ -151,11 +209,11 @@ class Trainer:
         t0 = time.time()
         try:
             while self.it < iters:
-                x, idx = self.batch()
+                x, c, idx = self.batch()
                 before = x.detach()
                 lo, hi = self.exp.steps
-                x = self.model.grow(x, int(torch.randint(lo, hi + 1, ())))
-                loss = self.per_sample_loss(x).mean()
+                x, c = self.grow(x, c, int(torch.randint(lo, hi + 1, ())))
+                loss = self.per_sample_loss(x, c if self.exp.chaos else None).mean()
                 self.opt.zero_grad()
                 loss.backward()
                 for p in self.model.parameters():  # per-parameter gradient normalization
@@ -163,6 +221,8 @@ class Trainer:
                 self.opt.step()
                 self.sched.step()
                 self.pool[idx] = x.detach()
+                self.pool_chaos[idx] = c
+                self.last_chaos = c
                 self.losses.append(loss.item())
                 self.it += 1
                 if self.it % every == 0:

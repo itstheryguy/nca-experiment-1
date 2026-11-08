@@ -1,5 +1,5 @@
 {
-  "_doc": "Chaos agent presets. Each red agent rolls 0-99 once per chaos tick and looks up the first row whose [lo, hi] contains the roll. spread: claim this many nearest cells. cod: chance this agent dies after acting. die: the agent dies (becomes black) without acting. sabotage: the agent dies and takes each neighboring agent with it with probability sabotage_kill. spawn: also place this many new agents at random cells anywhere. Rolls not covered by any row do nothing. freeze: chance per tick a black cell resolves; it becomes an empty NCA cell with probability black_to_nca, otherwise blue. thaw: chance per tick a blue cell becomes an empty NCA cell. retake_red / retake_black: chance per tick the NCA reclaims a red / black cell that touches a living NCA cell. black_resist: chance a black cell resists an agent spreading into it. every: NCA steps per chaos tick (the Space's default for the slider).",
+  "_doc": "Chaos agent presets. Each red agent rolls 0-99 once per chaos tick and looks up the first row whose [lo, hi] contains the roll. spread: claim this many nearest cells. cod: chance this agent dies after acting. die: the agent dies (becomes black) without acting. sabotage: the agent dies and takes each neighboring agent with it with probability sabotage_kill. spawn: also place this many new agents at random cells anywhere. Rolls not covered by any row do nothing. freeze: chance per tick a black cell resolves; it becomes an empty NCA cell with probability black_to_nca, otherwise blue. thaw: chance per tick a blue cell becomes an empty NCA cell. retake_red / retake_black: chance per tick the NCA reclaims a red / black cell that touches a living NCA cell. black_resist / nca_resist: chance a black / NCA cell resists an agent spreading into it. counter_seed: chance a failed attack on an empty NCA cell plants a new NCA seed there. every: NCA steps per chaos tick (the Space's default for the slider).",
   "brushfire": {
     "label": "Brushfire (the original table)",
     "table": [
@@ -55,7 +55,9 @@
     "black_resist": 0.2,
     "sabotage_kill": 0.5,
     "black_to_nca": 0.5,
-    "every": 2
+    "every": 2,
+    "nca_resist": 0.3,
+    "counter_seed": 0.25
   },
   "smolder": {
     "label": "Smolder (slow, burns out often)",
@@ -95,7 +97,9 @@
     "black_resist": 0.2,
     "sabotage_kill": 0.5,
     "black_to_nca": 0.5,
-    "every": 2
+    "every": 2,
+    "nca_resist": 0.3,
+    "counter_seed": 0.25
   },
   "wildfire": {
     "label": "Wildfire (big jumps, few deaths)",
@@ -152,6 +156,8 @@
     "black_resist": 0.2,
     "sabotage_kill": 0.5,
     "black_to_nca": 0.5,
-    "every": 2
+    "every": 2,
+    "nca_resist": 0.3,
+    "counter_seed": 0.25
   }
 }

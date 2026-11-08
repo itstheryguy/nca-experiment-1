@@ -9,8 +9,9 @@ Cells are NCA (0), RED (1, an active agent), BLACK (2, a dead agent), or BLUE (3
    probability `retake_red` / `retake_black`, and becomes an empty NCA cell. Living: alpha > 0.1 for models with
    an alive mask, any NCA cell otherwise. With `empty_defends`, every NCA cell counts, empty or not.
 4. Agents act: each RED rolls 0-99 and looks up the preset's table. `spread` claims the nearest NCA or BLACK
-   cells, ring by ring (random order within a ring). NCA cells are always taken; BLACK cells resist with
-   probability `black_resist`. `cod` is the chance the agent dies (becomes BLACK) after acting, `die` kills it
+   cells, ring by ring (random order within a ring). NCA cells resist with probability `nca_resist`, BLACK
+   cells with `black_resist`. A failed attack on an empty NCA cell (models with an alive mask) plants a new NCA
+   seed there with probability `counter_seed`. `cod` is the chance the agent dies (becomes BLACK) after acting, `die` kills it
    outright, and `spawn` places new agents at random cells anywhere. `sabotage` kills the agent and each RED
    neighbor (8 cells) with probability `sabotage_kill`.
 
@@ -62,6 +63,7 @@ def compile_preset(p):
     out = {k: p[k] for k in ("freeze", "thaw", "retake_red", "retake_black", "black_resist")}
     out |= {"black_to_nca": p.get("black_to_nca", 0.0), "sabotage_kill": p.get("sabotage_kill", 0.0),
             "every": p.get("every", 1), "empty_defends": bool(p.get("empty_defends", False)),
+            "nca_resist": p.get("nca_resist", 0.0), "counter_seed": p.get("counter_seed", 0.0),
             "label": p.get("label", "")}
     return out | {"spread": spread, "cod": cod, "spawn": spawn, "die": die, "sabotage": sabotage}
 
@@ -145,14 +147,22 @@ def tick(chaos, x, cfg, P, rand):
     flat = c.ravel()
     flat[agents[dies]] = BLACK
     flat[victims] = BLACK
+    seeds = np.zeros(0, np.int64)
     if new_red:
         t = np.concatenate(new_red)
-        t = t[(snap[t] == NCA) | ((snap[t] == BLACK) & (rand((t.size,)) >= P["black_resist"]))]
-        flat[t] = RED
+        st, u, u_seed = snap[t], rand((t.size,)), rand((t.size,))
+        hit_nca = (st == NCA) & (u >= P["nca_resist"])
+        hit_black = (st == BLACK) & (u >= P["black_resist"])
+        seeds = t[(st == NCA) & ~hit_nca & (u_seed < P["counter_seed"])]
+        flat[t[hit_nca | hit_black]] = RED
     c = flat.reshape(h, w)
 
     x = x.copy()
     x[:, cleared & (c == NCA)] = 0
+    if cfg["alive_mask"] and seeds.size:  # counter-seeds only take root in empty cells
+        xf = x.reshape(x.shape[0], -1)
+        seeds = seeds[(c.ravel()[seeds] == NCA) & (xf[3, seeds] <= 0.1)]
+        xf[:3, seeds], xf[3:, seeds] = 0.0, 1.0
     return c, clamp(x, c, cfg)
 
 

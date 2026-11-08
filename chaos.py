@@ -59,9 +59,20 @@ class Chaos:
     def _alive_mask(self):
         return self.cfg["alive_mask"] if isinstance(self.cfg, dict) else self.cfg.alive_mask
 
-    @torch.no_grad()
     def tick(self, chaos, x, rand):
-        """One chaos tick. Returns new (chaos, x). x keeps its autograd graph; only chaos changes are applied."""
+        """One chaos tick. Returns new (chaos, x). The chaos logic runs without gradients; its effects on x are
+        applied with torch.where, so gradients still flow through the cells the NCA keeps."""
+        with torch.no_grad():
+            c, cleared, seed_mask = self._advance(chaos, x.detach(), rand)
+        x = torch.where(cleared[:, None], 0.0, x)
+        if seed_mask is not None:
+            seed_state = torch.zeros(x.shape[1], device=x.device)
+            seed_state[3:] = 1.0
+            x = torch.where(seed_mask[:, None], seed_state[None, :, None, None], x)
+        return c, self.clamp(x, c)
+
+    def _advance(self, chaos, x, rand):
+        """Chaos logic: (new chaos, cells returned to the NCA empty, counter-seed cells or None)."""
         P = self.P
         b, h, w = chaos.shape
         hw = h * w
@@ -123,15 +134,24 @@ class Chaos:
         flat = c.flatten()
         flat[agents[dies]] = BLACK
         flat[victims] = BLACK
+        seeds = torch.zeros(0, dtype=torch.long, device=c.device)
         if new_red:
             t = torch.cat(new_red)
-            st = snap[t]
-            t = t[(st == NCA) | ((st == BLACK) & (rand((t.numel(),)) >= P["black_resist"]))]
-            flat[t] = RED
+            st, u, u_seed = snap[t], rand((t.numel(),)), rand((t.numel(),))
+            hit_nca = (st == NCA) & (u >= P["nca_resist"])
+            hit_black = (st == BLACK) & (u >= P["black_resist"])
+            seeds = t[(st == NCA) & ~hit_nca & (u_seed < P["counter_seed"])]
+            flat[t[hit_nca | hit_black]] = RED
         c = flat.view(b, h, w)
 
-        x = torch.where((cleared & (c == NCA))[:, None], 0.0, x)
-        return c, self.clamp(x, c)
+        cleared &= c == NCA
+        seed_mask = None
+        if self._alive_mask and seeds.numel():  # counter-seeds only take root in empty cells
+            seed_mask = torch.zeros(b * hw, dtype=torch.bool, device=c.device)
+            seed_mask[seeds] = True
+            alpha = torch.where(cleared, 0.0, x[:, 3])  # as it will be after clearing
+            seed_mask = seed_mask.view(b, h, w) & (c == NCA) & (alpha <= 0.1)
+        return c, cleared, seed_mask
 
     @torch.no_grad()
     def spark(self, chaos, rand, mask=None):

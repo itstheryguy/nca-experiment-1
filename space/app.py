@@ -31,6 +31,11 @@ MODELS = {
     "Topographic texture": ("models/texture.npz",
                             "Every cell is alive and the edges wrap around. Instead of one picture, the cells learn "
                             "the *style* of a contour map, so no two runs draw the same terrain."),
+    "Mountain, trained against chaos": ("models/mountain_chaos.npz",
+                                        "The mountain model fine-tuned while the chaos agent attacks it. "
+                                        "Try it with the chaos agent on, next to the plain mountain."),
+    "Texture, trained against chaos": ("models/texture_chaos.npz",
+                                       "The texture model fine-tuned while the chaos agent attacks it."),
 }
 VIEWS = ["Color", "Hidden channel", "All channels"]
 
