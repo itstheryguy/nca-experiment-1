@@ -6,9 +6,10 @@ PyTorch Neural Cellular Automata deployed as a static Hugging Face Space that ru
 
 | Model | Status | Based on |
 |---|---|---|
-| `mountain`: grows the 🏔️ emoji from one cell and regrows damage | trained (8,000 iterations, 50 min on an M1 Pro, loss 0.0034, stable through 2,000+ steps) | [Growing NCA](https://distill.pub/2020/growing-ca/) |
-| `texture`: grows a topographic contour-map texture on a wrapping grid | ready to train | [Self-Organising Textures](https://distill.pub/selforg/2021/textures/) |
-| `mountain_chaos`, `texture_chaos`: trained against a stochastic "chaos agent" | rules being designed | |
+| `mountain`: grows the 🏔️ emoji from one cell and regrows damage | 8,000 iterations, 50 min on an M1 Pro; loss 0.0034, stable through 2,000+ steps | [Growing NCA](https://distill.pub/2020/growing-ca/) |
+| `texture`: grows a topographic contour-map texture on a wrapping grid | 6,000 iterations, ~10 min on an A100; learns the contour lines, not yet the color bands | [Self-Organising Textures](https://distill.pub/selforg/2021/textures/) |
+| `mountain_chaos`: `mountain` fine-tuned against the chaos agent | 4,000 iterations, 53 min on an M1 Pro; **worse than `mountain`**: slower, hazier growth (error 0.012 vs 0.003, ~1% of seeds die) and lower survival against chaos | |
+| `texture_chaos`: `texture` fine-tuned against the chaos agent | 3,000 iterations on an A100; repairs around chaos cells. Chaos outcomes on the texture don't depend on the model (every cell defends), so it can't change who wins | |
 
 ## Layout
 
