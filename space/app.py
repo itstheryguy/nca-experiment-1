@@ -18,6 +18,7 @@ import streamlit as st
 
 import chaos_numpy as cn
 import nca_numpy as ca
+import network_numpy as nw
 
 HERE = Path(__file__).parent
 FRAME_SECONDS = 0.1  # fragment timer while playing
@@ -36,6 +37,10 @@ MODELS = {
                                         "Try it with the chaos agent on, next to the plain mountain."),
     "Texture, trained against chaos": ("models/texture_chaos.npz",
                                        "The texture model fine-tuned while the chaos agent attacks it."),
+    "Network": ("models/network.npz",
+                "Connect the hub (gold) to every target (teal) with as little network as possible, like the slime "
+                "mold that redrew the Tokyo rail map. Cells only see their neighbors, so they have to signal each "
+                "other where the hub and targets are."),
 }
 VIEWS = ["Color", "Hidden channel", "All channels"]
 
@@ -58,8 +63,17 @@ def clear_chaos():
     st.session_state.burned_out = None
 
 
-def reset():
-    st.session_state.x = ca.make_seed(weights(MODELS[st.session_state.model][0])["cfg"])
+def reset(new_layout=True):
+    """Start over. Network models get a new random hub and targets, unless new_layout is False."""
+    ss = st.session_state
+    cfg = weights(MODELS[ss.model][0])["cfg"]
+    if cfg["render"] == "network":
+        if new_layout or "layout" not in ss:
+            ss.layout = nw.make_layout(ss.rng, cfg["grid"])
+        ss.inp = nw.inputs(ss.layout, cfg["grid"])
+        ss.x = nw.seed(cfg, ss.layout)
+    else:
+        ss.x = ca.make_seed(cfg)
     st.session_state.steps = 0
     st.session_state.ms = None
     clear_chaos()
@@ -94,19 +108,26 @@ wts = weights(MODELS[model][0])
 cfg = wts["cfg"]
 rng = st.session_state.rng
 grid = cfg["grid"]
-n_visible = 4 if cfg["render"] == "rgba" else 3
+is_net = cfg["render"] == "network"
+n_visible = 4 if cfg["render"] == "rgba" else 3  # network: density, hub, targets
 st.caption(MODELS[model][1])
 
 # Controls. Any widget change reruns the whole script, which also re-registers the fragment timer below.
 c1, c2, c3, c4 = st.columns(4)
-c1.button("Reset", on_click=reset, width="stretch", icon=":material/restart_alt:")
+c1.button("Reset", on_click=reset, kwargs={"new_layout": False}, width="stretch", icon=":material/restart_alt:",
+          help="Start over" + (" on the same layout" if is_net else ""))
 st.session_state.playing = c2.toggle("Play", value=st.session_state.playing)
 if c3.button("Damage", width="stretch", icon=":material/bolt:", help="Erase a random circle"):
     cy, cx = rng.integers(grid // 4, 3 * grid // 4, size=2)
     st.session_state.x = ca.erase(st.session_state.x, cy, cx, radius=rng.integers(6, 14))
-if c4.button("Cut in half", width="stretch", icon=":material/content_cut:"):
+if is_net:
+    c4.button("New layout", on_click=reset, width="stretch", icon=":material/shuffle:",
+              help="A new random hub and targets")
+elif c4.button("Cut in half", width="stretch", icon=":material/content_cut:"):
     st.session_state.x = st.session_state.x.copy()
     st.session_state.x[:, :, grid // 2:] = 0
+if is_net:  # damage never removes the hub or targets
+    st.session_state.x = nw.clamp(st.session_state.x, st.session_state.inp)
 
 v1, v2 = st.columns([2, 1])
 view = v1.selectbox("View", VIEWS)
@@ -117,8 +138,10 @@ if view == "Hidden channel":
 speed = st.slider("Steps per frame", 1, 8, 2)
 
 with st.container(border=True):
-    chaos_on = st.toggle("Chaos agent", key="chaos_on", on_change=chaos_off,
-                         help="A stochastic process that spreads through the grid and fights the NCA for it.")
+    chaos_on = st.toggle("Chaos agent", key="chaos_on", on_change=chaos_off, disabled=is_net,
+                         help="Not available for the network model yet." if is_net else
+                         "A stochastic process that spreads through the grid and fights the NCA for it.")
+    chaos_on = chaos_on and not is_net
     if chaos_on:
         names = list(presets())
         k1, k2 = st.columns(2)
@@ -172,6 +195,8 @@ def board():
         x, c = ss.x, ss.chaos
         for _ in range(speed):
             x = ca.step(x, wts, rng)
+            if is_net:
+                x = nw.clamp(x, ss.inp)
             ss.steps += 1
             if chaos_on:
                 x = cn.clamp(x, c, cfg)
@@ -189,6 +214,11 @@ def board():
             'style="display:block;margin:auto;width:100%;max-width:512px;image-rendering:pixelated">')
     ms = st.session_state.get("ms")
     line = f"Step {st.session_state.steps}" + (f" · {ms:.0f} ms per step" if ms else "")
+    if is_net:
+        k = len(st.session_state.layout[1])
+        cells = int((nw.density(st.session_state.x) > 0.5).sum())
+        line += (f" · connected {round(nw.connected(st.session_state.x) * k)}/{k} targets"
+                 f" · network {cells} cells (spanning-tree baseline {nw.mst_cells(st.session_state.layout)})")
     if chaos_on:
         f = cn.counts(st.session_state.chaos)
         line += f" · NCA {f['nca']:.0%} · red {f['red']:.0%} · black {f['black']:.0%} · blue {f['blue']:.0%}"

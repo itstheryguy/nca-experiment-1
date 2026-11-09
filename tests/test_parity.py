@@ -14,6 +14,7 @@ import nca_numpy  # noqa: E402
 CONFIGS = {
     "mountain-style": nca.CAConfig(channels=16, hidden=128, alive_mask=True, wrap=False, render="rgba"),
     "texture-style": nca.CAConfig(channels=12, hidden=96, alive_mask=False, wrap=True, render="rgb"),
+    "network-style": nca.CAConfig(channels=16, hidden=128, alive_mask=False, wrap=False, render="network"),
 }
 
 

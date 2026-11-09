@@ -93,6 +93,10 @@ def erase(x, cy, cx, radius):
 
 def to_rgb(x, cfg):
     """Displayable RGB, (H, W, 3) uint8."""
+    if cfg["render"] == "network":
+        import network_numpy
+
+        return network_numpy.render(x)
     if cfg["render"] == "rgb":
         rgb = np.clip(x[:3] + 0.5, 0, 1)
     else:

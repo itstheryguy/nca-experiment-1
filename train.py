@@ -22,7 +22,8 @@ class Experiment:
     name: str
     ca: CAConfig
     target: str                         # image path
-    loss: str                           # "pixel" (MSE to a fixed RGBA image) or "style" (VGG Gram matrices)
+    loss: str                           # "pixel" (MSE to a fixed RGBA image), "style" (VGG Gram matrices), or
+                                        # "network" (connect hub and targets cheaply, see network.py)
     grid: int = 64
     target_size: int = 44               # pixel loss: emoji width in px within the grid
     pool_size: int = 1024
@@ -36,6 +37,7 @@ class Experiment:
     overflow_weight: float = 0.0        # penalty for state values outside [-1, 1]
     chaos: dict | None = None           # chaos agent settings, see CHAOS below
     init_from: str | None = None        # start from these weights (.pth) instead of from scratch
+    network: dict | None = None         # network task: targets (min, max), empty_cost, material_weight
     notes: str = field(default="", repr=False)
 
 
@@ -74,9 +76,26 @@ TEXTURE = Experiment(
 CHAOS = {"presets": ["smolder", "brushfire", "wildfire"], "spark_prob": 0.3, "clear_above": 0.5,
          "clear_burned_out": 0.3, "overrides": {"counter_seed": 0.0}, "chaos_free": 0.5}
 
+# Connect a random hub to 3-6 random targets with as little network as possible. Every cell is active (no alive
+# mask, no wrap). Steps reach 128 because signals spread at most one cell per step on a 64-cell grid.
+# Material cost ramps in (explore, then prune, like Physarum): with it on from the start, the cost on all 4,096
+# cells outweighed the route signal on the ~100 cells of each path, and the network channel went dead.
+NETWORK = Experiment(
+    name="network",
+    ca=CAConfig(channels=16, hidden=128, alive_mask=False, wrap=False, render="network"),
+    target="",
+    loss="network",
+    steps=(64, 128),
+    iters=8000,
+    n_damaged=2,
+    overflow_weight=1.0,
+    network={"targets": (3, 6), "empty_cost": 10.0, "material_weight": 2.0, "material_ramp": (1500, 4000)},
+)
+
 EXPERIMENTS = {
     "mountain": MOUNTAIN,
     "texture": TEXTURE,
+    "network": NETWORK,
     # Fine-tuned from the base models: they already grow; here they learn to live with chaos.
     "mountain_chaos": replace(MOUNTAIN, name="mountain_chaos", chaos=CHAOS, init_from="models/mountain.pth",
                               iters=4000, lr=5e-4, lr_drop_at=(2500,), n_damaged=1, notes="v1.1"),
@@ -129,6 +148,13 @@ class Trainer:
         self.opt = torch.optim.Adam(self.model.parameters(), lr=exp.lr)
         self.sched = torch.optim.lr_scheduler.MultiStepLR(self.opt, milestones=list(exp.lr_drop_at), gamma=0.1)
         self.pool = nca.make_seed(exp.ca, exp.pool_size, exp.grid, device)
+        if exp.network:
+            import network
+
+            self.net = network
+            self.np_rng = np.random.default_rng(seed)
+            self.pool_inputs = self.new_layouts(exp.pool_size)
+            self.pool = network.seed(exp.ca.channels, self.pool_inputs)
         self.pool_chaos = torch.zeros(exp.pool_size, exp.grid, exp.grid, dtype=torch.long, device=device)
         if exp.chaos:
             import chaos
@@ -147,9 +173,12 @@ class Trainer:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         if exp.loss == "pixel":
             self.target = nca.load_target(exp.target, exp.target_size, exp.grid).to(device)
-        else:
+        elif exp.loss == "style":
             self.target = nca.load_texture(exp.target, size=2 * exp.grid).to(device)
             self.style = StyleLoss(self.target, device)
+
+    def new_layouts(self, n):
+        return self.net.layouts(n, self.exp.grid, self.np_rng, self.device, k_range=self.exp.network["targets"])
 
     def per_sample_loss(self, x, c=None):
         if self.exp.loss == "pixel":
@@ -159,6 +188,11 @@ class Trainer:
             else:  # chaos cells are out of the NCA's control: score only the cells it owns
                 m = (c == 0)[:, None].float()
                 loss = (err * m).sum(dim=(1, 2, 3)) / (4 * m.sum(dim=(1, 2, 3))).clamp(min=1)
+        elif self.exp.loss == "network":
+            cfg = self.exp.network
+            lo, hi = cfg.get("material_ramp", (0, 0))
+            ramp = min(max((self.it - lo) / max(hi - lo, 1), 0.0), 1.0) if hi else 1.0
+            loss = self.net.loss(x, cfg["empty_cost"], cfg["material_weight"] * ramp)
         else:
             img = F.interpolate(nca.rgb(x, self.exp.ca), scale_factor=2, mode="bilinear", align_corners=False)
             loss = self.style(img)
@@ -172,10 +206,20 @@ class Trainer:
         idx = torch.randperm(exp.pool_size, device=self.device)[: exp.batch]
         x, c = self.pool[idx].clone(), self.pool_chaos[idx].clone()
         with torch.no_grad():
-            if exp.loss == "pixel":  # worst first, so the worst sample is the one reseeded
+            if exp.loss in ("pixel", "network"):  # worst first, so the worst sample is the one reseeded
                 order = self.per_sample_loss(x, c if exp.chaos else None).argsort(descending=True)
                 x, c, idx = x[order], c[order], idx[order]
             reseeded = self.it % exp.reseed_every == 0
+            if exp.network:
+                inp = self.pool_inputs[idx].clone()
+                if reseeded:  # a fresh layout, grown from nothing
+                    inp[:1] = self.new_layouts(1)
+                    x[:1] = self.net.seed(exp.ca.channels, inp[:1])
+                    self.pool_inputs[idx[0]] = inp[0]
+                if exp.n_damaged:
+                    self.net.damage(x[-exp.n_damaged:], inp[-exp.n_damaged:])
+                self.inputs = inp
+                return x, c, idx
             if reseeded:
                 x[:1] = nca.make_seed(exp.ca, 1, exp.grid, self.device)
                 c[:1] = 0
@@ -204,6 +248,10 @@ class Trainer:
         return self.chaos[0].clamp(x, c), c
 
     def grow(self, x, c, steps):
+        if self.exp.network:
+            for _ in range(steps):
+                x = self.net.clamp(self.model(x), self.inputs)
+            return x, c
         if not self.exp.chaos:
             return self.model.grow(x, steps), c
         if self.chaos_free:  # no ticks: existing chaos cells stay as they are, the NCA just grows

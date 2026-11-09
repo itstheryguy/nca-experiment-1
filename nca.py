@@ -33,7 +33,8 @@ class CAConfig:
     fire_rate: float = 0.5
     alive_mask: bool = True   # cells with no neighbor above ALIVE_THRESHOLD alpha are cleared
     wrap: bool = False        # toroidal grid (circular padding) instead of zero padding
-    render: str = "rgba"      # "rgba": premultiplied RGBA in 0-3, shown on white. "rgb": RGB in 0-2, offset by 0.5
+    render: str = "rgba"      # "rgba": premultiplied RGBA in 0-3, shown on white. "rgb": RGB in 0-2, offset by 0.5.
+                              # "network": channel 0 is network density, 1-2 are hub and target inputs (network.py)
 
 
 def alive_mask(x):
@@ -116,6 +117,13 @@ def rgb(x, cfg: CAConfig):
     """Displayable RGB in [0, 1] from a (..., C, H, W) state, as a tensor (..., 3, H, W)."""
     if cfg.render == "rgb":
         return (x[..., :3, :, :] + 0.5).clamp(0, 1)
+    if cfg.render == "network":
+        def col(c):
+            return torch.tensor(c, dtype=x.dtype, device=x.device)[:, None, None] / 255.0
+        n = x[..., 0:1, :, :].clamp(0, 1)
+        img = col([247, 244, 236]) * (1 - n) + col([92, 64, 51]) * n
+        img = torch.where(x[..., 2:3, :, :] > 0.5, col([20, 140, 150]), img)
+        return torch.where(x[..., 1:2, :, :] > 0.5, col([232, 163, 23]), img)
     a = x[..., 3:4, :, :].clamp(0, 1)
     return (1.0 - a + x[..., :3, :, :]).clamp(0, 1)
 
