@@ -21,6 +21,9 @@ Four models, picked from a dropdown:
 - **Topographic texture:** every cell is alive and the grid wraps around; trained on the *style* of a contour map
   with a VGG16 feature loss ([Self-Organising Textures](https://distill.pub/selforg/2021/textures/), Niklasson et al., 2021).
 - **Mountain / texture, trained against chaos:** the same models fine-tuned while a chaos agent attacks them.
+- **Network:** connect a randomly placed hub to 3-6 targets with as little network as possible, after the slime mold
+  *Physarum polycephalum* redrawing the Tokyo rail network. Cells signal through their hidden channels where the hub
+  and targets are, explore, then prune to a tree about the size of a minimum spanning tree.
 
 The **chaos agent** is a stochastic cellular process: active agents (red) roll a dice table each tick to spread,
 die (black), sabotage their neighbors, or spawn elsewhere; dead agents either return to the NCA or freeze (blue).
