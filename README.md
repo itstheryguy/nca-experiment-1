@@ -9,7 +9,7 @@ reimplements two published NCA models in PyTorch. It then extends them in two di
 shortest-path loss. All five models run live in the browser through a numpy port of the model.
 
 <p>
-<img src="assets/network.gif" width="256" alt="The network model growing from a gold hub to teal targets, pruning to a tree, and reconnecting after damage">
+<img src="assets/network.gif" width="256" alt="The network model exploring from a gold hub toward six teal targets, pruning to a tree, and regrowing its trunk after damage">
 <img src="assets/mountain.gif" width="256" alt="The mountain growing from one cell, cut in half at step 300, and regrowing">
 <img src="assets/mountain_chaos.gif" width="256" alt="The chaos-trained mountain fighting off a brushfire of red chaos agents">
 </p>
@@ -95,6 +95,7 @@ Most of the work was in diagnosing why a run didn't learn. A few examples:
 | `space/` | The Space: `app.py` (Streamlit), numpy ports (`nca_numpy.py`, `chaos_numpy.py`, `network_numpy.py`), chaos presets, `index.html` (stlite), `models/*.npz` |
 | `tests/` | Parity tests: numpy vs. PyTorch for every model type and for the chaos agent (with replayed random draws) |
 | `tools/montecarlo.py` | Batched Monte Carlo games of an NCA against the chaos agent |
+| `tools/make_network_gif.py` | Renders the network GIF above with the Space's numpy runtime |
 | `tools/make_topo_texture.py` | Generates the contour-map texture target |
 | `runs/` | Training loss logs |
 
