@@ -27,6 +27,10 @@ GROWING = "https://distill.pub/2020/growing-ca/"
 TEXTURES = "https://distill.pub/selforg/2021/textures/"
 # Shown in this order when the file exists. index.html must list each file too, so stlite loads it.
 MODELS = {
+    "Network": ("models/network.npz",
+                "Connect the hub (gold) to every target (teal) with as little network as possible, like the slime "
+                "mold that redrew the Tokyo rail map. Cells only see their neighbors, so they have to signal each "
+                "other where the hub and targets are."),
     "Mountain": ("models/mountain.npz",
                  "Grows the 🏔️ emoji from a single live cell, holds it steady, and regrows damage."),
     "Topographic texture": ("models/texture.npz",
@@ -37,10 +41,6 @@ MODELS = {
                                         "Try it with the chaos agent on, next to the plain mountain."),
     "Texture, trained against chaos": ("models/texture_chaos.npz",
                                        "The texture model fine-tuned while the chaos agent attacks it."),
-    "Network": ("models/network.npz",
-                "Connect the hub (gold) to every target (teal) with as little network as possible, like the slime "
-                "mold that redrew the Tokyo rail map. Cells only see their neighbors, so they have to signal each "
-                "other where the hub and targets are."),
 }
 VIEWS = ["Color", "Hidden channel", "All channels"]
 
