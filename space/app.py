@@ -98,9 +98,11 @@ if "model" not in st.session_state:
 st.title("🏔️ Neural Cellular Automata")
 st.markdown(
     "Every pixel runs the same tiny neural network and sees only its 8 neighbors. Nothing stores the picture: it "
-    "exists only as the cells' agreement with each other, which is why it can repair itself. "
-    f"PyTorch reimplementations of [Growing Neural Cellular Automata]({GROWING}) and "
-    f"[Self-Organising Textures]({TEXTURES}), running in your browser."
+    "exists only as the cells' agreement with each other, which is why it can repair itself.\n\n"
+    f"Five models: PyTorch reimplementations of [Growing Neural Cellular Automata]({GROWING}) and "
+    f"[Self-Organising Textures]({TEXTURES}), both also fine-tuned against an original chaos agent, and an "
+    "original network-building task trained with a differentiable shortest-path loss. Everything runs in your "
+    f"browser. [Code and write-up]({REPO})."
 )
 
 model = st.selectbox("Model", available, key="model", on_change=reset)
@@ -231,22 +233,38 @@ def board():
 
 board()
 
+if is_net:
+    VISIBLE = "visible channels (network density, and the hub and target markers, which are fixed inputs)"
+    LIFE = ("3. **Keeps its inputs:** the hub and target channels are written back after every step, so cells can "
+            "read them but not move them. There's no alive mask: any cell can join the network.")
+    TRAINING = """
+The network is trained on random layouts with a loss built from a shortest path. Stepping into a cell costs 1 inside
+the network and 30 in empty space; the cheapest route from the hub to every cell is computed by repeated relaxation,
+unrolled so the gradient reaches the cells on each target's best route. A material cost for every network cell
+makes shared trunks pay off, and it ramps in during training, so the cells learn to explore first and then prune,
+like the slime mold. On 256 unseen layouts it connects every target 69% of the time (86% of targets), with a network
+1.03× the size of a minimum spanning tree, and reconnects after damage 89% of the time."""
+else:
+    VISIBLE = "visible color channels"
+    LIFE = ("3. **Lives or dies** (mountain models only): a cell with no neighbor above 0.1 opacity is cleared to "
+            "empty. The texture has no empty space: every cell is alive, and the grid wraps around at the edges.")
+    TRAINING = """
+The mountain is trained to match the emoji pixel by pixel. The texture is trained to match the *style* of a
+contour map: the feature statistics a pretrained image network (VGG16) sees, not the exact pixels. Both train on a
+pool of past states, some damaged, so the rule learns to stay stable and repair, not only grow once."""
+
 with st.expander("How it works"):
     st.markdown(f"""
-The grid is {grid}×{grid} cells, each holding {cfg["channels"]} numbers: {n_visible} visible color channels plus
-{cfg["channels"] - n_visible} hidden "chemical" channels. Each step, every cell:
+The grid is {grid}×{grid} cells, each holding {cfg["channels"]} numbers: {n_visible} {VISIBLE}, plus
+{cfg["channels"] - n_visible} hidden "chemical" channels the cells use to signal each other. Each step, every cell:
 
 1. **Perceives** its 3×3 neighborhood with fixed filters: its own state, and horizontal and vertical gradients
    (Sobel), giving {3 * cfg["channels"]} numbers.
 2. **Updates** by passing those through a small network shared by all cells: {3 * cfg["channels"]} →
    {cfg["hidden"]} (ReLU) → {cfg["channels"]}, added to its state. Only a random half of cells update each step,
    so the cells can't rely on a global clock.
-3. **Lives or dies** (mountain only): a cell with no neighbor above 0.1 opacity is cleared to empty. The texture
-   has no empty space: every cell is alive, and the grid wraps around at the edges.
-
-The mountain is trained to match the emoji pixel by pixel. The texture is trained to match the *style* of a
-contour map: the feature statistics a pretrained image network (VGG16) sees, not the exact pixels. Both train on a
-pool of past states, some damaged, so the rule learns to stay stable and repair, not only grow once.
+{LIFE}
+{TRAINING}
 
 Code: [{REPO.removeprefix("https://")}]({REPO}).
 """)
@@ -258,12 +276,14 @@ Cells are either **NCA**, 🟥 **active agents**, ⬛ **dead agents**, or 🟦 *
 1. Frozen cells thaw back to empty NCA cells at the thaw rate (0 by default: frozen is permanent).
 2. Dead agents resolve with probability 0.1: half become empty NCA cells, half freeze.
 3. The NCA reclaims chaos cells that touch a living NCA cell: active agents with probability 0.2, dead ones 0.8.
-4. Every active agent rolls 0-99 on its preset's table: die, spread to the nearest 1-40 cells (always succeeding on
-   NCA cells, mountain or empty alike; dead cells resist 20% of the time), die after spreading, spawn new
-   agents anywhere on the grid, or sabotage: die and take each neighboring agent with it half the time.
+4. Every active agent rolls 0-99 on its preset's table: die, spread to the nearest 1-40 cells, die after
+   spreading, spawn new agents anywhere on the grid, or sabotage: die and take each neighboring agent with it half
+   the time. NCA cells resist a spread 30% of the time, mountain and empty alike, and dead agents 20%. On the
+   mountain models, a failed attack on an empty cell plants a new NCA seed there 25% of the time.
 
 The NCA sees chaos cells as fixed colors through its normal 3×3 view, but can't change them. With permanent freezing,
-every run eventually ends: chaos burns out, and what's left is NCA and frozen cells.
+every run eventually ends: chaos burns out, and what's left is NCA and frozen cells. Monte Carlo runs of the rules
+found the game nearly all-or-nothing: chaos either fizzles early or takes most of the grid.
 """)
 
 st.caption("Emoji: Noto Emoji 🏔️ by Google, Apache License 2.0. Contour map: generated (tools/make_topo_texture.py).")
