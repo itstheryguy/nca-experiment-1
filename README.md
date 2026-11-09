@@ -9,6 +9,7 @@ PyTorch Neural Cellular Automata deployed as a static Hugging Face Space that ru
 | `mountain`: grows the 🏔️ emoji from one cell and regrows damage | 8,000 iterations, 50 min on an M1 Pro; loss 0.0034, stable through 2,000+ steps | [Growing NCA](https://distill.pub/2020/growing-ca/) |
 | `texture`: grows a topographic contour-map texture on a wrapping grid | 6,000 iterations, ~10 min on an A100; learns the contour lines, not yet the color bands | [Self-Organising Textures](https://distill.pub/selforg/2021/textures/) |
 | `mountain_chaos`: `mountain` fine-tuned against the chaos agent | v1.1, 4,000 iterations on an A100. Better than the base model against brushfire (survives 51% vs 45%, median integrity 0.80 vs 0.37), even against smolder and wildfire, slightly hazier without chaos (error 0.007 vs 0.003). v1 (counter-seeds on in training, lr 1e-3) was worse on every measure | |
+| `network`: connect a random hub to 3-6 targets with as little network as possible (after Physarum's Tokyo rail network) | v1, 8,000 iterations, 21 min on an A100. All targets connected in 25% of fresh layouts (59% of targets), mostly near misses; 1.6x a spanning tree when connected; 85% of damaged networks reconnect. v1.1 raises the cost of gaps | |
 | `texture_chaos`: `texture` fine-tuned against the chaos agent | 3,000 iterations on an A100; repairs around chaos cells. Chaos outcomes on the texture don't depend on the model (every cell defends), so it can't change who wins | |
 
 ## Layout

@@ -89,7 +89,9 @@ NETWORK = Experiment(
     iters=8000,
     n_damaged=2,
     overflow_weight=1.0,
-    network={"targets": (3, 6), "empty_cost": 10.0, "material_weight": 2.0, "material_ramp": (1500, 4000)},
+    # v1.1: empty_cost 10 -> 30. v1 (cost 10) connected all targets in only ~25% of fresh layouts, mostly near misses:
+    # a one-cell gap or a half-density stub was cheap enough (10, or ~5.5) to leave unfilled to save material.
+    network={"targets": (3, 6), "empty_cost": 30.0, "material_weight": 2.0, "material_ramp": (1500, 4000)},
 )
 
 EXPERIMENTS = {
